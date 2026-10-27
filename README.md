@@ -1,36 +1,48 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Reel DNA — corrected project
 
-## Getting Started
+This archive contains the application source and configuration from the uploaded project, with generated folders and private secrets excluded.
 
-First, run the development server:
+## Main correction
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
-```
+Video-frame role classification previously existed in two separate places: the frame report used topic-specific regular expressions, while the alternative-sequence builder used a second set of regular expressions. Those rules drifted and caused the same frame to receive different roles.
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The updated `src/app/api/analyze/route.ts` asks the vision model to assign one topic-independent semantic role to each frame and validates that role against a fixed schema. The same role is then reused for the frame report and both suggested sequences.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+Semantic roles:
+- `hook`
+- `setup`
+- `product_showcase`
+- `demonstration`
+- `transition`
+- `payoff`
+- `call_to_action`
+- `other`
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The prompt explicitly says not to infer a role from genre/topic alone, not to confuse showing an object with using it, and not to treat the last sampled frame as a result automatically. This removes the duplicated topic-specific keyword classifiers. It cannot guarantee perfect interpretation of every video: visual model output still depends on frame quality and the model's judgment.
 
-## Learn More
+## Setup
 
-To learn more about Next.js, take a look at the following resources:
+1. Install Node.js 22 or a compatible supported version.
+2. Copy `.env.example` to `.env.local` and fill in your own values. Do not share `.env.local`.
+3. Install packages with `npm ci`.
+4. Run `npm run dev`.
+5. Verify with `npm run build` and test several short videos from different genres.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+Required environment:
+- `ANTHROPIC_API_KEY` — Anthropic API key with access/billing enabled.
+- `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` — Supabase project settings.
+- `REPORT_LANG` — optional, `en` (default) or `uk`.
+- `ANTHROPIC_MODEL` — optional, defaults to `claude-sonnet-4-6`.
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Verification note
 
-## Deploy on Vercel
+A build could not be completed in this workspace because package installation (`npm ci`) timed out before dependencies were installed. The archive therefore should be treated as a corrected source package awaiting a local build check, not as a claim that a production build has passed. Run `npm ci` and `npm run build` on your Mac before deploying.
+## Additional scoring corrections
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- Low brightness is no longer treated as an automatic defect when the main subject is still identifiable. This is intended to reduce false penalties for deliberate candlelit/nighttime aesthetics.
+- Sharpness heuristics are more conservative in low-light frames because Laplacian sharpness is sensitive to darkness and noise reduction. Near-zero values can still trigger a review warning.
+- These changes reduce known false positives; they do not guarantee perfect analysis. The vision model still assesses sampled still frames, not full motion, audio, or actual audience retention.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Validation status
+
+The source archive was checked for ZIP integrity. Dependency installation timed out in this environment, so a full Next.js production build and lint run could not be completed here. Run `npm ci`, `npm run lint`, and `npm run build` locally before deployment.
