@@ -3,6 +3,25 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+function getEdmontonDateOffset(offset: number): string {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Edmonton",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const get = (type: string) =>
+    Number(parts.find((part) => part.type === type)?.value);
+
+  const date = new Date(
+    Date.UTC(get("year"), get("month") - 1, get("day")),
+  );
+
+  date.setUTCDate(date.getUTCDate() + offset);
+  return date.toISOString().slice(0, 10);
+}
+
 export async function POST(request: Request) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
 
@@ -27,6 +46,12 @@ export async function POST(request: Request) {
     const goal = String(input.goal ?? "sales").trim().slice(0, 100);
     const platform = String(input.platform ?? "Instagram").trim().slice(0, 100);
     const tone = String(input.tone ?? "warm and authentic").trim().slice(0, 200);
+    const cadence = String(input.cadence ?? "3 posts/week").trim().slice(0, 50);
+    const hoursPerWeek = String(input.hoursPerWeek ?? "3–5 hours").trim().slice(0, 50);
+    const resources = String(input.resources ?? "").trim().slice(0, 500);
+    const performance = String(input.performance ?? "").trim().slice(0, 1000);
+    const cadenceMatch = cadence.match(/^(3|4|5) posts\/week$/);
+    const weeklyCount = cadence === "Daily" ? 7 : cadenceMatch ? Number(cadenceMatch[1]) : 3;
 
     if (!brand || !product || !audience) {
       return NextResponse.json(
@@ -35,38 +60,56 @@ export async function POST(request: Request) {
       );
     }
 
-    const prompt = `Act as a senior social media strategist.
-Create a concise, specific strategy for:
-Brand: ${brand}
-Product: ${product}
-Audience: ${audience}
-Goal: ${goal}
-Platform: ${platform}
-Voice: ${tone}
+    const prompt = `Act as a senior social media strategist who creates practical, evidence-aware content plans for real businesses.
+Create a specific strategy using these inputs.
 
-Return valid JSON only. Use exactly this structure:
+BRAND CONTEXT
+Brand: ${brand}
+Product/service: ${product}
+Target audience: ${audience}
+Primary goal: ${goal}
+Platform(s): ${platform}
+Brand voice: ${tone}
+
+REAL-WORLD CONSTRAINTS
+Publishing frequency: ${cadence} (${weeklyCount} planned posts this week)
+Time available: ${hoursPerWeek}
+Resources and constraints: ${resources || "Not provided. Use realistic, low-cost assumptions."}
+Previous performance data: ${performance || "Not provided. Do not invent results or assume past performance."}
+
+Requirements:
+- Make every recommendation specific to the product, audience, goal, platform and voice. Avoid generic advice that could fit any brand.
+- Create exactly ${weeklyCount} posts, not seven compulsory posts. Spread them across distinct, realistic days.
+- Respect the time and resources available. Do not assume a team, paid ads, professional equipment, customer footage or a website unless stated.
+- Every post must include a practical sequence of 3–5 shots or slides, describing exactly what to film or show in order.
+- Every post needs an objective tied to the goal, a strong platform-appropriate hook, a specific topic and a natural CTA. Avoid repetitive ideas.
+- Keep advice feasible and actionable. Do not invent analytics, audience demographics, baselines or results, and never guarantee outcomes.
+- If performance data is supplied, distinguish evidence from hypotheses. If not supplied, explain what to track first to establish a baseline.
+- Use the brand's language and voice for creative hooks where possible.
+
+Return valid JSON only with exactly this structure:
 {
- "positioning":"2 concise sentences",
- "audience_insight":"2 concise sentences",
+ "positioning":"2 concise, brand-specific sentences",
+ "audience_insight":"2 concise sentences; label hypotheses as hypotheses",
  "content_pillars":[
-  {"name":"short name","purpose":"one sentence","ideas":["idea 1","idea 2","idea 3"]}
+  {"name":"short name","purpose":"one sentence tied to the goal","ideas":["specific idea 1","specific idea 2","specific idea 3"]}
  ],
  "weekly_plan":[
-  {"day":"Monday","format":"Reel or Story or Carousel or Post","topic":"specific topic","hook":"short opening hook","cta":"short call to action"}
+  {"day":"day of week","format":"Reel, Story, Carousel or Post","topic":"specific concept","hook":"opening hook","cta":"specific call to action","objective":"intended outcome","shot_list":["first shot or slide","second shot or slide","third shot or slide"]}
  ],
- "growth_actions":["action 1","action 2","action 3"],
+ "growth_actions":["specific feasible action 1","specific feasible action 2","specific feasible action 3"],
  "success_metrics":[
-  {"metric":"name","why":"reason","review":"how to review"}
+  {"metric":"metric name","why":"why it matters for this goal","review":"how and when to review without inventing a baseline"}
  ],
- "first_steps":["step 1","step 2","step 3"]
+ "first_steps":["concrete step 1","concrete step 2","concrete step 3"]
 }
-Requirements: exactly 4 content pillars, exactly 7 weekly plan entries for Monday through Sunday, 3 growth actions, 3 success metrics and 3 first steps. Be concise but actionable. Never invent current analytics or guarantee results. JSON only, no markdown.`;
+Requirements: exactly 4 content pillars, exactly ${weeklyCount} weekly_plan entries, exactly 3 growth_actions, exactly 3 success_metrics and exactly 3 first_steps. Valid JSON only, no markdown.`;
 
     const startedAt = Date.now();
     console.info("[SMM] Starting Anthropic request");
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 45000);
+    const timeout = setTimeout(() => controller.abort(), 55000);
 
     let response: Response;
 
@@ -80,7 +123,7 @@ Requirements: exactly 4 content pillars, exactly 7 weekly plan entries for Monda
         },
         body: JSON.stringify({
           model: process.env.ANTHROPIC_MODEL || "claude-sonnet-4-6",
-          max_tokens: 1800,
+          max_tokens: 8192,
           messages: [{ role: "user", content: prompt }],
         }),
         signal: controller.signal,
@@ -126,6 +169,7 @@ Requirements: exactly 4 content pillars, exactly 7 weekly plan entries for Monda
 
     let providerResult: {
       content?: Array<{ type?: string; text?: string }>;
+      stop_reason?: string | null;
     };
 
     try {
@@ -148,13 +192,42 @@ Requirements: exactly 4 content pillars, exactly 7 weekly plan entries for Monda
       );
     }
 
+    if (providerResult.stop_reason === "max_tokens") {
+      console.error("[SMM] AI response was truncated at the token limit.");
+      return NextResponse.json(
+        { error: "The AI response was cut off before completion. Please retry." },
+        { status: 502 },
+      );
+    }
+
     const cleaned = rawText
       .replace(/^```(?:json)?\s*/i, "")
       .replace(/\s*```$/, "")
       .trim();
 
     try {
-      const strategy: unknown = JSON.parse(cleaned);
+      const strategy = JSON.parse(cleaned) as {
+        weekly_plan?: Array<Record<string, unknown>>;
+      };
+
+      const weeklyPlan = strategy.weekly_plan;
+
+      if (!Array.isArray(weeklyPlan)) {
+        return NextResponse.json(
+          { error: "The AI returned a strategy without a valid weekly plan." },
+          { status: 502 },
+        );
+      }
+
+      const taskCount = weeklyPlan.length;
+
+      strategy.weekly_plan = weeklyPlan.map((task, index) => ({
+        ...task,
+        scheduled_date: getEdmontonDateOffset(
+          taskCount <= 1 ? 0 : Math.round(index * 6 / (taskCount - 1)),
+        ),
+      }));
+
       console.info(`[SMM] Strategy completed in ${Date.now() - startedAt}ms`);
       return NextResponse.json({ strategy });
     } catch {

@@ -12,6 +12,7 @@ type ShotItem = {
   shot_role?: string;
   visual_description?: string | null;
   reason?: string;
+  thumbnail_data_url?: string | null;
 };
 type ShotOrder = {
   result_available: boolean;
@@ -24,6 +25,7 @@ type ExtendedAnalysisReport = Omit<ReelAnalysisReport, "frame_by_frame" | "recom
   recommended_shot_order?: ShotOrder;
   instagram_copy?: {
     hashtags?: string[];
+    seo_keywords?: string[];
     captions?: string[];
   };
 };
@@ -59,6 +61,7 @@ export default function MyReelsPage() {
   const [analysisErrors, setAnalysisErrors] = useState<Record<string, string>>({});
   const [analysisExpanded, setAnalysisExpanded] = useState<Record<string, boolean>>({});
   const [deletingReelId, setDeletingReelId] = useState<string | null>(null);
+  const [pendingDeleteReel, setPendingDeleteReel] = useState<Reel | null>(null);
 
   const loadReels = useCallback(async () => {
     setLoadingReels(true);
@@ -81,6 +84,31 @@ export default function MyReelsPage() {
 
       if (queryError) throw new Error(queryError.message);
       setReels((data ?? []) as Reel[]);
+
+      const { data: savedAnalyses, error: analysesError } = await supabase
+        .from("reel_analyses")
+        .select("reel_id, analysis, status")
+        .eq("user_id", userData.user.id)
+        .eq("status", "completed");
+
+      if (analysesError) throw new Error(analysesError.message);
+
+      const restoredResults: Record<string, { analysis: ExtendedAnalysisReport }> = {};
+
+      for (const row of savedAnalyses ?? []) {
+        if (row.analysis && typeof row.analysis === "object") {
+          restoredResults[row.reel_id] = {
+            analysis: row.analysis as ExtendedAnalysisReport,
+          };
+        }
+      }
+
+      setAnalysisResults(restoredResults);
+      setAnalysisExpanded(
+        Object.fromEntries(
+          Object.keys(restoredResults).map((id) => [id, false])
+        )
+      );
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not load your videos.",
@@ -186,23 +214,25 @@ export default function MyReelsPage() {
 
       await loadReels();
     } catch (err) {
-      setError(
-        err instanceof Error
-          ? err.message
-          : "Something went wrong while uploading your video.",
-      );
+      console.error("[Reels] Video upload failed:", err);
+      setError("We couldn't upload your video. Please try again. If the problem continues, check your connection and video file.");
     } finally {
       setUploading(false);
     }
   }
 
-  async function deleteVideo(reel: Reel) {
-    const confirmed = window.confirm(`Delete “${reel.title}” from your library? This will also delete the uploaded video and cannot be undone.`);
-    if (!confirmed) return;
+  function deleteVideo(reel: Reel) {
+    setPendingDeleteReel(reel);
+  }
 
+  async function confirmDeleteVideo() {
+    if (!pendingDeleteReel || deletingReelId) return;
+
+    const reel = pendingDeleteReel;
     setDeletingReelId(reel.id);
     setError("");
     setMessage("");
+
     try {
       const supabase = createClient();
       const { data: userData, error: userError } = await supabase.auth.getUser();
@@ -222,12 +252,15 @@ export default function MyReelsPage() {
       setReels((previous) => previous.filter((item) => item.id !== reel.id));
       setAnalysisResults((previous) => { const next = { ...previous }; delete next[reel.id]; return next; });
       setAnalysisErrors((previous) => { const next = { ...previous }; delete next[reel.id]; return next; });
+      setAnalysisExpanded((previous) => { const next = { ...previous }; delete next[reel.id]; return next; });
       setVideoUrls((previous) => { const next = { ...previous }; delete next[reel.id]; return next; });
       setMessage(storageError
         ? "Video was removed from your library, but its stored file could not be deleted. Please contact support."
         : "Video deleted successfully.");
+      setPendingDeleteReel(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not delete this video.");
+      console.error("[Reels] Video deletion failed:", err);
+      setError("We couldn't delete this video. Please try again.");
     } finally {
       setDeletingReelId(null);
     }
@@ -235,25 +268,44 @@ export default function MyReelsPage() {
 
   async function watchVideo(reel: Reel) {
     setError("");
+    setMessage("");
     setOpeningReelId(reel.id);
 
     try {
       const supabase = createClient();
+
+      console.log("[Watch video] Reel ID:", reel.id);
+      console.log("[Watch video] Storage path:", reel.storage_path);
+
       const { data, error: urlError } = await supabase.storage
         .from("reel-videos")
         .createSignedUrl(reel.storage_path, 60 * 5);
 
-      if (urlError || !data?.signedUrl) {
-        throw new Error(urlError?.message || "Could not open this video.");
+      if (urlError) {
+        console.error("[Watch video] Supabase error:", urlError);
+        throw new Error(urlError.message);
       }
 
-      setVideoUrls((previous) => ({ ...previous, [reel.id]: data.signedUrl }));
-      setMessage("");
+      if (!data?.signedUrl) {
+        throw new Error("Supabase returned no signed video URL.");
+      }
 
+      console.log("[Watch video] Signed URL created successfully.");
+
+      setVideoUrls((previous) => ({
+        ...previous,
+        [reel.id]: data.signedUrl,
+      }));
+
+      setError("");
+      setAnalysisExpanded((previous) => ({
+        ...previous,
+        [reel.id]: true,
+      }));
+      setMessage("");
     } catch (err) {
-      setError(
-        err instanceof Error ? err.message : "Could not open this video.",
-      );
+      console.error("[Watch video] Failed:", err);
+      setError("We couldn't open this video. Please try again.");
     } finally {
       setOpeningReelId(null);
     }
@@ -281,11 +333,15 @@ export default function MyReelsPage() {
         ...previous,
         [reel.id]: result,
       }));
+      setAnalysisExpanded((previous) => ({
+        ...previous,
+        [reel.id]: true,
+      }));
     } catch (err) {
+      console.error("[Reels] Analysis failed:", err);
       setAnalysisErrors((previous) => ({
         ...previous,
-        [reel.id]:
-          err instanceof Error ? err.message : "Could not analyze this Reel.",
+        [reel.id]: "We couldn't analyze this Reel. Please try again. If the problem continues, try uploading the video again.",
       }));
     } finally {
       setAnalyzingReelId(null);
@@ -300,11 +356,11 @@ export default function MyReelsPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#09090d] px-5 py-8 text-white sm:px-8">
+    <main className="min-h-screen bg-[#090a12] px-5 py-8 text-white sm:px-8">
       <div className="mx-auto max-w-4xl">
         <header className="flex items-center justify-between gap-4 border-b border-white/10 pb-6">
           <Link href="/dashboard" className="flex items-center gap-3 font-semibold">
-            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#b4f34b] font-black text-[#11120e]">R</span>
+            <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-[#a3e635] font-black text-[#090a12]">R</span>
             REEL DNA
           </Link>
           <Link href="/dashboard" className="text-sm text-white/60 hover:text-white">
@@ -313,7 +369,7 @@ export default function MyReelsPage() {
         </header>
 
         <section className="py-12">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#b4f34b]">
+          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-[#a3e635]">
             Your video library
           </p>
           <h1 className="mt-4 text-4xl font-semibold tracking-tight sm:text-5xl">
@@ -324,7 +380,7 @@ export default function MyReelsPage() {
           </p>
         </section>
 
-        <section className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 sm:p-8">
+        <section className="rdna-card p-6 sm:p-8">
           <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
             <h2 className="text-xl font-semibold">Upload a Reel</h2>
             <span className={`rounded-full border px-3 py-1 text-xs ${reels.length >= MAX_LIBRARY_VIDEOS ? "border-orange-400/30 bg-orange-400/10 text-orange-200" : "border-white/10 bg-white/[0.04] text-white/55"}`}>
@@ -346,22 +402,22 @@ export default function MyReelsPage() {
             onChange={(event) => setTitle(event.target.value)}
             maxLength={120}
             placeholder="e.g. Autumn candle Reel"
-            className="mb-6 w-full rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm outline-none focus:border-[#b4f34b]/60"
+            className="rdna-input mb-6 text-sm"
           />
 
           <button
             type="button"
             onClick={() => inputRef.current?.click()}
             disabled={uploading}
-            className="flex min-h-40 w-full flex-col items-center justify-center rounded-2xl border border-dashed border-white/20 bg-black/10 px-5 py-8 text-center hover:border-[#b4f34b]/60 disabled:opacity-50"
+            className="flex min-h-40 w-full flex-col items-center justify-center rounded-2xl border border-dashed border-white/20 bg-black/10 px-5 py-8 text-center hover:border-[#a3e635]/60 disabled:opacity-50"
           >
-            <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#b4f34b]/10 text-2xl text-[#b4f34b]">↑</span>
+            <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-2xl bg-[#a3e635]/10 text-2xl text-[#a3e635]">↑</span>
             <span className="font-medium">
               {file ? "Choose a different video" : "Select a video to upload"}
             </span>
             <span className="mt-2 text-sm text-white/45">MP4, MOV or WebM · Maximum 50 MB</span>
             {file && (
-              <span className="mt-4 break-all text-sm text-[#b4f34b]">
+              <span className="mt-4 break-all text-sm text-[#a3e635]">
                 {file.name} · {(file.size / (1024 * 1024)).toFixed(2)} MB
               </span>
             )}
@@ -381,7 +437,7 @@ export default function MyReelsPage() {
             </p>
           )}
           {message && (
-            <p role="status" className="mt-5 rounded-xl border border-[#b4f34b]/20 bg-[#b4f34b]/10 p-3 text-sm text-[#b4f34b]">
+            <p role="status" className="mt-5 rounded-xl border border-[#a3e635]/20 bg-[#a3e635]/10 p-3 text-sm text-[#a3e635]">
               {message}
             </p>
           )}
@@ -390,7 +446,7 @@ export default function MyReelsPage() {
             type="button"
             onClick={uploadVideo}
             disabled={!file || uploading || reels.length >= MAX_LIBRARY_VIDEOS}
-            className="mt-6 w-full rounded-full bg-[#b4f34b] px-5 py-3 font-semibold text-[#11120e] hover:bg-[#c4ff65] disabled:cursor-not-allowed disabled:opacity-40"
+            className="rdna-button-primary mt-6 w-full disabled:cursor-not-allowed"
           >
             {uploading ? "Uploading..." : "Upload video"}
           </button>
@@ -411,18 +467,18 @@ export default function MyReelsPage() {
               type="button"
               onClick={() => void loadReels()}
               disabled={loadingReels}
-              className="rounded-full border border-white/15 px-4 py-2 text-sm text-white/70 hover:text-white disabled:opacity-50"
+              className="rounded-full border border-white/10 bg-[#11141f] px-4 py-2 text-sm text-white/75 transition hover:border-[#a3e635]/50 hover:text-white disabled:opacity-50"
             >
               {loadingReels ? "Loading..." : "Refresh"}
             </button>
           </div>
 
           {loadingReels ? (
-            <p className="rounded-2xl border border-white/10 p-6 text-sm text-white/50">
+            <p className="rounded-2xl border border-white/10 bg-[#11141f] p-6 text-sm text-white/50">
               Loading your videos...
             </p>
           ) : reels.length === 0 ? (
-            <p className="rounded-2xl border border-white/10 p-6 text-sm text-white/50">
+            <p className="rounded-2xl border border-white/10 bg-[#11141f] p-6 text-sm text-white/50">
               No videos yet. Upload your first Reel above.
             </p>
           ) : (
@@ -430,7 +486,7 @@ export default function MyReelsPage() {
               {reels.map((reel) => (
                 <article
                   key={reel.id}
-                  className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-white/[0.025] p-5"
+                  className="flex flex-col gap-3 rounded-2xl border border-white/10 bg-[#11141f] p-5"
                 >
                   <div className="min-w-0">
                     <h3 className="break-words font-medium">{reel.title}</h3>
@@ -446,7 +502,7 @@ export default function MyReelsPage() {
                       type="button"
                       onClick={() => void watchVideo(reel)}
                       disabled={openingReelId === reel.id}
-                      className="rounded-full bg-[#b4f34b] px-4 py-2 text-sm font-semibold text-[#11120e] hover:bg-[#c4ff65] disabled:cursor-wait disabled:opacity-50"
+                      className="rounded-full bg-[#a3e635] px-4 py-2 text-sm font-semibold text-[#090a12] hover:bg-[#bef264] disabled:cursor-wait disabled:opacity-50"
                     >
                       {openingReelId === reel.id ? "Opening..." : "Watch video"}
                     </button>
@@ -454,7 +510,7 @@ export default function MyReelsPage() {
                       type="button"
                       onClick={() => void analyzeReel(reel)}
                       disabled={analyzingReelId !== null}
-                      className="rounded-full border border-[#b4f34b]/50 px-4 py-2 text-sm font-semibold text-[#b4f34b] hover:bg-[#b4f34b]/10 disabled:cursor-wait disabled:opacity-50"
+                      className="rounded-full border border-[#a3e635]/50 px-4 py-2 text-sm font-semibold text-[#a3e635] hover:bg-[#a3e635]/10 disabled:cursor-wait disabled:opacity-50"
                     >
                       {analyzingReelId === reel.id ? "Analyzing..." : "Analyze Reel"}
                     </button>
@@ -467,22 +523,42 @@ export default function MyReelsPage() {
                       {deletingReelId === reel.id ? "Deleting..." : "Delete video"}
                     </button>
                   </div>
+                  {videoUrls[reel.id] && (
+                    <div className="relative mt-5 w-full overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#15171b] via-[#0b0c0f] to-[#111713] p-3 shadow-[0_0_24px_rgba(163,230,53,0.06)]">
+                      <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#a3e635]">Reel DNA</p>
+
+                        </div>
+
+                      </div>
+                      <div className="overflow-hidden rounded-xl border border-white/10 bg-black shadow-[0_0_16px_rgba(163,230,53,0.05)]">
+                        <video
+                          src={videoUrls[reel.id]}
+                          controls
+                          playsInline
+                          preload="metadata"
+                          className="block max-h-[560px] w-full bg-black"
+                        />
+                      </div>
+                    </div>
+                  )}
                   {analysisErrors[reel.id] && (
                     <p role="alert" className="text-sm text-red-300">
                       {analysisErrors[reel.id]}
                     </p>
                   )}
                   {analysisResults[reel.id] && (
-                    <div className="w-full rounded-2xl border border-[#b4f34b]/20 bg-black/20 p-5">
+                    <div className="w-full rounded-2xl border border-[#a3e635]/20 bg-[#090a12] p-5">
                       <div className="mb-1 flex flex-wrap items-center justify-between gap-3">
                         <div>
-                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b4f34b]">Analysis report</p>
+                          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a3e635]">Analysis report</p>
                           <p className="mt-1 text-sm text-white/45">{analysisExpanded[reel.id] === false ? "Report collapsed" : "Full report is open"}</p>
                         </div>
                         <button
                           type="button"
                           onClick={() => setAnalysisExpanded((previous) => ({ ...previous, [reel.id]: previous[reel.id] === false }))}
-                          className="rounded-full border border-white/15 px-4 py-2 text-sm text-white/75 hover:border-[#b4f34b]/50 hover:text-white"
+                          className="rounded-full border border-white/10 bg-[#11141f] px-4 py-2 text-sm text-white/75 transition hover:border-[#a3e635]/50 hover:text-white"
                           aria-expanded={analysisExpanded[reel.id] !== false}
                         >
                           {analysisExpanded[reel.id] === false ? "Expand analysis ↑" : "Collapse analysis ↓"}
@@ -539,36 +615,47 @@ export default function MyReelsPage() {
 
                         return (
                           <>
-                            <section className="space-y-4 rounded-2xl border border-white/10 bg-[#101015] p-4">
+                            <section className="space-y-4 rounded-2xl border border-white/10 bg-[#11141f] p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <div>
-                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b4f34b]">Interactive review</p>
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a3e635]">Interactive review</p>
                                   <h5 className="mt-1 text-lg font-semibold">Video timeline</h5>
                                 </div>
                                 <span className="font-mono text-sm text-white/55">{formatTime(selectedTime)}</span>
                               </div>
 
                               {videoUrls[reel.id] ? (
-                                <video
-                                  ref={(element) => { videoRefs.current[reel.id] = element; }}
-                                  src={videoUrls[reel.id]}
-                                  controls
-                                  playsInline
-                                  preload="metadata"
-                                  onTimeUpdate={(event) => {
-                                    const time = event.currentTarget.currentTime;
-                                    setSelectedTimestamps((previous) => ({ ...previous, [reel.id]: time }));
-                                  }}
-                                  className="max-h-[560px] w-full rounded-xl bg-black"
-                                />
+                                <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-gradient-to-br from-[#15171b] via-[#0b0c0f] to-[#111713] p-3 shadow-[0_0_24px_rgba(163,230,53,0.06)]">
+                                  <div className="mb-3 flex items-center justify-between gap-3 px-1">
+                                    <div>
+                                      <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#a3e635]">Reel DNA</p>
+                                      <p className="mt-1 text-sm font-medium text-white/85">Interactive video review</p>
+                                    </div>
+                                    <span className="rounded-full border border-[#a3e635]/25 bg-[#a3e635]/10 px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-[#a3e635]">Live timeline</span>
+                                  </div>
+                                  <div className="overflow-hidden rounded-xl border border-white/10 bg-black shadow-[0_0_16px_rgba(163,230,53,0.05)]">
+                                    <video
+                                      ref={(element) => { videoRefs.current[reel.id] = element; }}
+                                      src={videoUrls[reel.id]}
+                                      controls
+                                      playsInline
+                                      preload="metadata"
+                                      onTimeUpdate={(event) => {
+                                        const time = event.currentTarget.currentTime;
+                                        setSelectedTimestamps((previous) => ({ ...previous, [reel.id]: time }));
+                                      }}
+                                      className="block max-h-[560px] w-full bg-black"
+                                    />
+                                  </div>
+                                </div>
                               ) : (
-                                <div className="rounded-xl border border-dashed border-white/15 bg-black/30 p-6 text-center">
+                                <div className="rounded-xl border border-dashed border-white/10 bg-[#090a12] p-6 text-center">
                                   <p className="text-sm text-white/65">Open the video to review it alongside the analysis.</p>
                                   <button
                                     type="button"
                                     onClick={() => void watchVideo(reel)}
                                     disabled={openingReelId === reel.id}
-                                    className="mt-3 rounded-full bg-[#b4f34b] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50"
+                                    className="mt-3 rounded-full bg-[#a3e635] px-4 py-2 text-sm font-semibold text-black disabled:opacity-50"
                                   >
                                     {openingReelId === reel.id ? "Loading video..." : "Load video here"}
                                   </button>
@@ -591,7 +678,7 @@ export default function MyReelsPage() {
                                           type="button"
                                           title={`${formatTime(frame.timestamp_seconds)} · ${statusLabel(frame)} status`}
                                           onClick={() => jumpToFrame(frame)}
-                                          className={`min-w-0 rounded-md ${segmentColor(frame)} ${active ? "ring-2 ring-white ring-offset-2 ring-offset-[#101015]" : "opacity-65 hover:opacity-100"}`}
+                                          className={`min-w-0 rounded-md ${segmentColor(frame)} ${active ? "ring-2 ring-white ring-offset-2 ring-offset-[#11141f]" : "opacity-65 hover:opacity-100"}`}
                                           style={{ flex: `${width} 1 0%` }}
                                           aria-label={`Go to ${formatTime(frame.timestamp_seconds)}, ${statusLabel(frame)} status`}
                                         />
@@ -608,10 +695,10 @@ export default function MyReelsPage() {
                                 </div>
                               </div>
 
-                              <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
+                              <div className="rounded-xl border border-white/10 bg-[#11141f] p-4">
                                 <div className="flex flex-wrap items-center justify-between gap-2">
                                   <h5 className="font-semibold">AI Actionable Fixes</h5>
-                                  {selectedFrame && <span className="font-mono text-xs text-[#b4f34b]">{formatTime(selectedFrame.timestamp_seconds)}</span>}
+                                  {selectedFrame && <span className="font-mono text-xs text-[#a3e635]">{formatTime(selectedFrame.timestamp_seconds)}</span>}
                                 </div>
                                 {selectedFrame ? (
                                   <>
@@ -628,7 +715,7 @@ export default function MyReelsPage() {
                                         )}
                                         {selectedFrame.changes?.length > 0 && (
                                           <div>
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-[#b4f34b]">Recommended action</p>
+                                            <p className="text-xs font-semibold uppercase tracking-wider text-[#a3e635]">Recommended action</p>
                                             <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/75">
                                               {selectedFrame.changes.map((item: string, index: number) => <li key={`fix-${index}`}>{item}</li>)}
                                             </ul>
@@ -638,10 +725,6 @@ export default function MyReelsPage() {
                                     ) : (
                                       <p className="mt-3 text-sm leading-6 text-white/60">No specific change can be justified from the visual evidence available in this sampled frame.</p>
                                     )}
-                                    {selectedFrame.evidence?.length > 0 && (
-                                      <p className="mt-3 text-xs leading-5 text-white/40">Evidence: {selectedFrame.evidence.join(" · ")}</p>
-                                    )}
-                                    <p className="mt-2 text-xs text-white/40">Model confidence: {Math.round(Math.max(0, Math.min(1, selectedFrame.confidence ?? 0)) * 100)}% · This is a sampled-frame assessment, not measured audience retention.</p>
                                   </>
                                 ) : (
                                   <p className="mt-2 text-sm text-white/45">Run the analysis to see time-specific recommendations.</p>
@@ -651,38 +734,54 @@ export default function MyReelsPage() {
 
                             <div className="flex flex-wrap items-center justify-between gap-3">
                               <div>
-                                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#b4f34b]">
+                                <p className="text-xs font-semibold uppercase tracking-[0.2em] text-[#a3e635]">
                                   Performance audit
                                 </p>
                                 <h4 className="mt-1 text-xl font-semibold">AI Reel Analysis</h4>
                               </div>
-                              <span className="rounded-full bg-[#b4f34b]/10 px-3 py-1.5 text-sm font-semibold text-[#b4f34b]">
+                              <span className="rounded-full bg-[#a3e635]/10 px-3 py-1.5 text-sm font-semibold text-[#a3e635]">
                                 Overall: {report?.overall_score ?? "—"}/10
                               </span>
                             </div>
 
                             {report?.instagram_copy && (
-                              <section className="space-y-5 rounded-xl border border-[#b4f34b]/20 bg-[#b4f34b]/[0.04] p-4">
+                              <section className="space-y-5 rounded-xl border border-[#a3e635]/20 bg-[#a3e635]/[0.04] p-4">
+                                <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
                                 <div>
-                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#b4f34b]">Instagram publishing ideas</p>
+                                  <p className="text-xs font-semibold uppercase tracking-[0.18em] text-[#a3e635]">Instagram publishing ideas</p>
                                   <h5 className="mt-1 text-lg font-semibold">Hashtags tailored to this Reel</h5>
                                   <p className="mt-1 text-xs leading-5 text-white/45">Niche and mood-led suggestions, not a list of objects in the frame. Add TAVILY_API_KEY to enable public-web inspiration research; reach is never guaranteed.</p>
                                   {Array.isArray(report.instagram_copy.hashtags) && report.instagram_copy.hashtags.length > 0 ? (
                                     <div className="mt-3 flex flex-wrap gap-2">
                                       {report.instagram_copy.hashtags.map((tag: string, index: number) => (
-                                        <button key={`${tag}-${index}`} type="button" onClick={() => void navigator.clipboard?.writeText(tag)} title="Click to copy" className="rounded-full border border-white/15 bg-black/30 px-3 py-1.5 text-sm text-white/80 hover:border-[#b4f34b]/50">{tag}</button>
+                                        <button key={`${tag}-${index}`} type="button" onClick={() => void navigator.clipboard?.writeText(tag)} title="Click to copy" className="rounded-full border border-white/10 bg-[#090a12] px-3 py-1.5 text-sm text-white/80 hover:border-[#a3e635]/50">{tag}</button>
                                       ))}
                                     </div>
                                   ) : <p className="mt-2 text-sm text-white/50">No hashtag suggestions were generated. Run the analysis again to retry.</p>}
                                 </div>
                                 <div>
-                                  <h5 className="font-semibold">5 aesthetic caption options</h5>
+                                  <h5 className="font-semibold">Instagram SEO keywords</h5>
+                                  <p className="mt-1 text-xs leading-5 text-white/45">Search phrases your target audience may use to discover content like this Reel. These are suggestions, not verified search-volume data.</p>
+                                  {Array.isArray(report.instagram_copy.seo_keywords) && report.instagram_copy.seo_keywords.length > 0 ? (
+                                    <>
+                                      <div className="mt-3 flex flex-wrap gap-2">
+                                        {report.instagram_copy.seo_keywords.map((keyword: string, index: number) => (
+                                          <button key={`${keyword}-${index}`} type="button" onClick={() => void navigator.clipboard?.writeText(keyword)} title="Click to copy keyword" className="rounded-full border border-white/10 bg-[#090a12] px-3 py-1.5 text-sm text-white/80 hover:border-[#a3e635]/50">{keyword}</button>
+                                        ))}
+                                      </div>
+                                      <button type="button" onClick={() => void navigator.clipboard?.writeText(report.instagram_copy?.seo_keywords?.join(", ") ?? "")} className="mt-3 rounded-md border border-white/10 px-3 py-1.5 text-xs text-white/60 hover:text-white">Copy all keywords</button>
+                                    </>
+                                  ) : <p className="mt-2 text-sm text-white/50">No SEO keyword suggestions were generated. Run the analysis again to retry.</p>}
+                                </div>
+                                </div>
+                                <div>
+                                  <h5 className="font-semibold">5 conversion-focused caption options</h5>
                                   {Array.isArray(report.instagram_copy.captions) && report.instagram_copy.captions.length > 0 ? (
-                                    <ol className="mt-3 space-y-2">
+                                    <ol className="mt-3 grid grid-cols-1 gap-3">
                                       {report.instagram_copy.captions.map((caption: string, index: number) => (
-                                        <li key={`${index}-${caption}`} className="flex items-start gap-3 rounded-lg border border-white/10 bg-black/20 p-3">
-                                          <span className="pt-0.5 text-xs font-semibold text-[#b4f34b]">{index + 1}.</span>
-                                          <p className="flex-1 text-sm leading-6 text-white/75">{caption}</p>
+                                        <li key={`${index}-${caption}`} className="grid grid-cols-[76px_minmax(0,1fr)_auto] items-start gap-x-4 gap-y-2 rounded-lg border border-white/10 bg-[#090a12] p-4">
+                                          <span className="pt-1 text-xs font-semibold tracking-wide text-[#a3e635]">{["COMMENT", "SAVE", "SHARE", "DM", "ACTION"][index] ?? `${index + 1}.`}</span>
+                                          <p className="min-w-0 whitespace-normal break-words text-sm leading-6 text-white/75">{caption}</p>
                                           <button type="button" onClick={() => void navigator.clipboard?.writeText(caption)} className="shrink-0 rounded-md border border-white/10 px-2 py-1 text-xs text-white/55 hover:text-white" title="Copy caption">Copy</button>
                                         </li>
                                       ))}
@@ -692,10 +791,10 @@ export default function MyReelsPage() {
                               </section>
                             )}
 
-                            <section className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
+                            <section className="rounded-xl border border-white/10 bg-[#11141f] p-4">
                               <div className="flex flex-wrap items-center justify-between gap-2">
                                 <h5 className="font-semibold">Opening hook</h5>
-                                <span className="text-sm text-[#b4f34b]">
+                                <span className="text-sm text-[#a3e635]">
                                   Score: {hook?.score ?? "—"}/10
                                 </span>
                               </div>
@@ -752,11 +851,11 @@ export default function MyReelsPage() {
                                   {frameItems.map((frame: FrameAnalysis, index: number) => (
                                     <article
                                       key={`${frame.timestamp_seconds ?? index}-${index}`}
-                                      className="rounded-xl border border-white/10 bg-white/[0.025] p-4"
+                                      className="rounded-xl border border-white/10 bg-[#11141f] p-4"
                                     >
                                       <div className="flex flex-wrap items-center justify-between gap-2">
                                         <div className="flex flex-wrap items-center gap-2">
-                                          <span className="rounded-md bg-[#b4f34b]/10 px-2 py-1 font-mono text-sm text-[#b4f34b]">
+                                          <span className="rounded-md bg-[#a3e635]/10 px-2 py-1 font-mono text-sm text-[#a3e635]">
                                             {formatTime(frame.timestamp_seconds)}
                                           </span>
                                           <span className="text-xs uppercase tracking-wider text-white/50">
@@ -787,7 +886,7 @@ export default function MyReelsPage() {
 
                                       {frame.keep?.length > 0 && (
                                         <div className="mt-3">
-                                          <p className="text-xs font-semibold uppercase tracking-wider text-[#b4f34b]">Keep</p>
+                                          <p className="text-xs font-semibold uppercase tracking-wider text-[#a3e635]">Keep</p>
                                           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/65">
                                             {asList(frame.keep).map((item, itemIndex) => (
                                               <li key={itemIndex}>{item}</li>
@@ -808,8 +907,8 @@ export default function MyReelsPage() {
                                       )}
 
                                       {frame.changes?.length > 0 && (
-                                        <div className="mt-3 rounded-lg border border-[#b4f34b]/15 bg-[#b4f34b]/[0.04] p-3">
-                                          <p className="text-xs font-semibold uppercase tracking-wider text-[#b4f34b]">What to change</p>
+                                        <div className="mt-3 rounded-lg border border-[#a3e635]/15 bg-[#a3e635]/[0.04] p-3">
+                                          <p className="text-xs font-semibold uppercase tracking-wider text-[#a3e635]">What to change</p>
                                           <ul className="mt-1 list-disc space-y-1 pl-5 text-sm text-white/75">
                                             {asList(frame.changes).map((item, itemIndex) => (
                                               <li key={itemIndex}>{item}</li>
@@ -818,17 +917,7 @@ export default function MyReelsPage() {
                                         </div>
                                       )}
 
-                                      {frame.evidence?.length > 0 && (
-                                        <p className="mt-3 text-xs leading-5 text-white/40">
-                                          <strong className="text-white/55">Evidence:</strong>{" "}
-                                          {asList(frame.evidence).join(" · ")}
-                                        </p>
-                                      )}
-
                                       <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-3 text-xs text-white/40">
-                                        <span>
-                                          Confidence: {Math.round(Math.max(0, Math.min(1, frame.confidence ?? 0)) * 100)}%
-                                        </span>
                                         {frame.end_timestamp_seconds != null && (
                                           <span>Approx. end: {formatTime(frame.end_timestamp_seconds)}</span>
                                         )}
@@ -843,7 +932,7 @@ export default function MyReelsPage() {
                               {report?.recommended_shot_order && (
                                 <section className="mt-5 space-y-4">
                                   <div>
-                                    <h5 className="font-semibold text-[#b4f34b]">Alternative Shot Sequences</h5>
+                                    <h5 className="font-semibold text-[#a3e635]">Alternative Shot Sequences</h5>
                                     <p className="mt-1 text-xs leading-5 text-white/45">
                                       Two editing concepts based on sampled-frame descriptions. These are creative hypotheses, not predictions of retention or performance.
                                     </p>
@@ -865,18 +954,27 @@ export default function MyReelsPage() {
                                       items: report.recommended_shot_order.process_first,
                                     },
                                   ].map((sequence: { key: string; title: string; subtitle: string; items: ShotItem[] }) => (
-                                    <div key={sequence.key} className="rounded-xl border border-[#b4f34b]/20 bg-[#b4f34b]/[0.04] p-4">
+                                    <div key={sequence.key} className="rounded-xl border border-[#a3e635]/20 bg-[#a3e635]/[0.04] p-4">
                                       <h6 className="font-semibold text-white">{sequence.title}</h6>
                                       <p className="mt-1 text-xs leading-5 text-white/45">{sequence.subtitle}</p>
                                       <ol className="mt-3 space-y-3">
                                         {(sequence.items ?? []).map((item: ShotItem, index: number) => (
                                           <li key={`${sequence.key}-${item.frame_index ?? index}-${index}`} className="flex items-start gap-3">
-                                            <span className="flex h-7 min-w-7 items-center justify-center rounded-md bg-[#b4f34b]/10 px-2 text-sm font-semibold text-[#b4f34b]">
+                                            <span className="flex h-7 min-w-7 items-center justify-center rounded-md bg-[#a3e635]/10 px-2 text-sm font-semibold text-[#a3e635]">
                                               {item.position ?? index + 1}
                                             </span>
+                                            {item.thumbnail_data_url && (
+                                              <img
+                                                src={item.thumbnail_data_url}
+                                                alt={item.visual_description ?? `Original frame ${item.frame_index ?? ""}`}
+                                                className="h-20 w-28 shrink-0 rounded-lg border border-white/10 bg-[#090a12] object-cover"
+                                                loading="lazy"
+                                                draggable={false}
+                                              />
+                                            )}
                                             <div className="min-w-0 flex-1">
                                               <div className="mb-1 flex flex-wrap items-center gap-2">
-                                                <span className="font-mono text-xs text-[#b4f34b]">{item.timestamp ?? ""}</span>
+                                                <span className="font-mono text-xs text-[#a3e635]">{item.timestamp ?? ""}</span>
                                                 <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-white/60">
                                                   {(
                                                     {
@@ -901,7 +999,7 @@ export default function MyReelsPage() {
                                   ))}
 
                                   {(report.recommended_shot_order.excluded_frames ?? []).length > 0 && (
-                                    <div className="rounded-xl border border-white/10 bg-white/[0.025] p-4">
+                                    <div className="rounded-xl border border-white/10 bg-[#11141f] p-4">
                                       <h6 className="font-semibold text-white/80">Excluded Frames</h6>
                                       <p className="mt-1 text-xs leading-5 text-white/45">
                                         Frames omitted from the suggested sequences because of potential visual issues. Review the original video before removing them permanently.
@@ -910,7 +1008,7 @@ export default function MyReelsPage() {
                                         {report.recommended_shot_order.excluded_frames.map((item: ShotItem, index: number) => (
                                           <li key={`excluded-${item.frame_index ?? index}-${index}`} className="border-t border-white/5 pt-3 first:border-0 first:pt-0">
                                             <p className="text-sm text-white/75">
-                                              <span className="mr-2 font-mono text-[#b4f34b]">{item.timestamp ?? ""}</span>
+                                              <span className="mr-2 font-mono text-[#a3e635]">{item.timestamp ?? ""}</span>
                                               {item.visual_description ?? (item.frame_index != null ? `Sampled frame ${item.frame_index}` : "Excluded shot")}
                                             </p>
                                             <p className="mt-1 text-xs leading-5 text-white/45">{item.reason}</p>
@@ -938,7 +1036,7 @@ export default function MyReelsPage() {
 
                             {report?.strengths?.length > 0 && (
                               <section>
-                                <h5 className="font-semibold text-[#b4f34b]">What already works</h5>
+                                <h5 className="font-semibold text-[#a3e635]">What already works</h5>
                                 <ul className="mt-2 list-disc space-y-1 pl-5 text-sm text-white/65">
                                   {report.strengths.map((item: string, index: number) => (
                                     <li key={index}>{item}</li>
@@ -959,8 +1057,8 @@ export default function MyReelsPage() {
                             )}
 
                             {(hook?.alternative_hooks?.length > 0 || report?.alternative_hook) && (
-                              <section className="rounded-xl border border-[#b4f34b]/20 bg-[#b4f34b]/[0.04] p-4">
-                                <p className="text-xs font-semibold uppercase tracking-wider text-[#b4f34b]">
+                              <section className="rounded-xl border border-[#a3e635]/20 bg-[#a3e635]/[0.04] p-4">
+                                <p className="text-xs font-semibold uppercase tracking-wider text-[#a3e635]">
                                   Alternative opening
                                 </p>
                                 <ul className="mt-3 list-disc space-y-1 pl-5 text-sm text-white/65">
@@ -989,6 +1087,68 @@ export default function MyReelsPage() {
             </div>
           )}
         </section>
+        {pendingDeleteReel && (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/75 px-4 py-6 backdrop-blur-sm"
+            onMouseDown={(event) => {
+              if (event.target === event.currentTarget && !deletingReelId) {
+                setPendingDeleteReel(null);
+              }
+            }}
+          >
+            <section
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="delete-reel-title"
+              className="w-full max-w-md overflow-hidden rounded-3xl border border-white/10 bg-[#11141f] shadow-2xl shadow-black/50"
+            >
+              <div className="p-6 sm:p-7">
+                <button
+                  type="button"
+                  aria-label="Close delete confirmation"
+                  disabled={Boolean(deletingReelId)}
+                  onClick={() => setPendingDeleteReel(null)}
+                  className="mb-5 flex h-12 w-12 items-center justify-center rounded-2xl border border-red-400/20 bg-red-400/[0.08] text-xl text-red-300 transition hover:border-red-300/40 hover:bg-red-400/[0.15] disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  ×
+                </button>
+
+                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-lime-400">
+                  Video library
+                </p>
+                <h2 id="delete-reel-title" className="mt-2 text-xl font-semibold tracking-tight text-white">
+                  Delete this video?
+                </h2>
+                <p className="mt-3 break-words text-sm leading-6 text-zinc-400">
+                  You are about to permanently delete{" "}
+                  <span className="font-medium text-zinc-200">
+                    “{pendingDeleteReel.title}”
+                  </span>
+                  . This action cannot be undone.
+                </p>
+              </div>
+
+              <div className="flex flex-col-reverse gap-3 border-t border-white/10 bg-black/10 p-5 sm:flex-row sm:justify-end sm:px-7">
+                <button
+                  type="button"
+                  disabled={Boolean(deletingReelId)}
+                  onClick={() => setPendingDeleteReel(null)}
+                  className="rounded-full border border-white/10 px-5 py-2.5 text-sm font-medium text-zinc-300 transition hover:border-white/25 hover:bg-white/[0.04] disabled:opacity-40"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={Boolean(deletingReelId)}
+                  onClick={() => void confirmDeleteVideo()}
+                  className="rounded-full border border-red-400/30 bg-red-400/10 px-5 py-2.5 text-sm font-semibold text-red-200 transition hover:border-red-300/50 hover:bg-red-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {deletingReelId ? "Deleting…" : "Delete video"}
+                </button>
+              </div>
+            </section>
+          </div>
+        )}
       </div>
     </main>
   );

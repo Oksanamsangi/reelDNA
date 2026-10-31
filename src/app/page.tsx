@@ -2,7 +2,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
+import { createClient } from "@/lib/supabase/client";
 
 const features = [
   {
@@ -37,177 +38,129 @@ const bars = [24, 43, 34, 58, 40, 67, 48];
 
 
 function FloatingOverlay() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const itemsRef = useRef<(HTMLDivElement | null)[]>([]);
+  const [activeIndex, setActiveIndex] = useState(0);
 
   useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
+    const interval = window.setInterval(() => {
+      setActiveIndex((current) => (current + 1) % 3);
+    }, 3200);
 
-    const items = itemsRef.current.filter(
-      (item): item is HTMLDivElement => item !== null,
-    );
-
-const randomVelocity = () => (Math.random() - 0.5) * 0.12;
-    const particles = items.map((_, index) => ({
-      x: 20 + index * 100,
-      y: 20 + index * 45,
-      vx: randomVelocity(),
-      vy: randomVelocity(),
-      changeIn: 40 + Math.random() * 100,
-    }));
-
-    let frame = 0;
-    let lastTime = 0;
-
-    const animate = (time: number) => {
-      const delta = lastTime
-        ? Math.min((time - lastTime) / 16.67, 2)
-        : 1;
-      lastTime = time;
-
-      items.forEach((item, index) => {
-        const p = particles[index];
-        const maxX = Math.max(0, container.clientWidth - item.offsetWidth);
-        const maxY = Math.max(0, container.clientHeight - item.offsetHeight);
-
-        p.changeIn -= delta;
-
-        if (p.changeIn <= 0) {
-          p.vx += randomVelocity() * 0.4;
-          p.vy += randomVelocity() * 0.4;
-          p.changeIn = 40 + Math.random() * 100;
-        }
-
-p.vx = Math.max(-0.1, Math.min(0.1, p.vx));
-p.vy = Math.max(-0.1, Math.min(0.1, p.vy));
-
-        p.x += p.vx * delta;
-        p.y += p.vy * delta;
-
-        if (p.x <= 0 || p.x >= maxX) {
-          p.x = Math.max(0, Math.min(p.x, maxX));
-          p.vx *= -1;
-          p.vy += randomVelocity() * 0.2;
-        }
-
-        if (p.y <= 0 || p.y >= maxY) {
-          p.y = Math.max(0, Math.min(p.y, maxY));
-          p.vy *= -1;
-          p.vx += randomVelocity() * 0.2;
-        }
-
-        item.style.transform = `translate3d(${p.x}px, ${p.y}px, 0)`;
-      });
-
-      frame = requestAnimationFrame(animate);
-    };
-
-    const resizeObserver = new ResizeObserver(() => {
-      items.forEach((item, index) => {
-        const p = particles[index];
-        p.x = Math.min(p.x, Math.max(0, container.clientWidth - item.offsetWidth));
-        p.y = Math.min(p.y, Math.max(0, container.clientHeight - item.offsetHeight));
-      });
-    });
-
-    resizeObserver.observe(container);
-    items.forEach((item) => resizeObserver.observe(item));
-
-    frame = requestAnimationFrame(animate);
-
-    return () => {
-      cancelAnimationFrame(frame);
-      resizeObserver.disconnect();
-    };
+    return () => window.clearInterval(interval);
   }, []);
 
-  const blockClass =
-    "absolute left-0 top-0 box-border w-[220px] h-[148px] overflow-hidden rounded-2xl border border-white/10 bg-[#171923]/95 p-4 shadow-2xl shadow-black/40 backdrop-blur-md will-change-transform sm:w-[240px]";
+  const cards = [
+    {
+      title: "Visual storytelling",
+      label: "OVERLAY INFO",
+      badge: "AI SCAN",
+      description:
+        "Check framing, lighting and visual consistency throughout your Reel.",
+      footer: "78% visual consistency",
+    },
+    {
+      title: "Opening seconds",
+      label: "HOOK ANALYSIS",
+      badge: "01",
+      description:
+        "Evaluate whether the first frame earns attention and creates curiosity.",
+      footer: "FIRST IMPRESSION",
+    },
+    {
+      title: "Improve pacing",
+      label: "NEXT STEP",
+      badge: "02",
+      description:
+        "Remove slow moments, tighten transitions and keep each shot purposeful.",
+      footer: "ACTIONABLE TIP",
+    },
+  ];
 
   return (
     <div
-      ref={containerRef}
-      className="pointer-events-none absolute inset-0 z-20 overflow-hidden rounded-3xl"
-      aria-hidden="true"
+      className="pointer-events-auto absolute inset-x-0 bottom-4 z-20 h-[164px] overflow-hidden"
+      aria-label="AI insight cards carousel"
     >
-      <div
-        ref={(el) => {
-          itemsRef.current[0] = el;
-        }}
-        className={`${blockClass} border-lime-400/30`}
-      >
-        <div className="flex items-center justify-between gap-2">
-          <p className="text-[10px] font-bold tracking-[0.15em] text-lime-300">
-            OVERLAY INFO
-          </p>
-          <span className="rounded-full bg-lime-400/10 px-2 py-1 text-[9px] text-lime-300">
-            AI SCAN
-          </span>
-        </div>
-        <p className="mt-3 text-sm font-semibold text-white">
-          Visual storytelling
-        </p>
-        <p className="mt-1 text-xs leading-5 text-zinc-400">
-          Check framing, lighting and visual consistency throughout your Reel.
-        </p>
-        <div className="mt-3 h-1 overflow-hidden rounded-full bg-white/10">
-          <div className="h-full w-[78%] rounded-full bg-lime-400" />
-        </div>
-      </div>
+      {cards.map((card, index) => {
+        const position = (index - activeIndex + 3) % 3;
+        const isActive = position === 0;
+        const left = position === 0 ? "50%" : position === 1 ? "83%" : "17%";
 
-      <div
-        ref={(el) => {
-          itemsRef.current[1] = el;
-        }}
-        className={blockClass}
-      >
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold tracking-[0.12em] text-zinc-400">
-            HOOK ANALYSIS
-          </p>
-          <span className="text-xs text-lime-300">01</span>
-        </div>
-        <p className="mt-3 text-lg font-bold text-white">Opening seconds</p>
-        <p className="mt-1 text-xs leading-5 text-zinc-400">
-          Evaluate whether the first frame earns attention and creates curiosity.
-        </p>
-        <p className="mt-2 text-[10px] font-semibold text-lime-300">
-          FIRST IMPRESSION
-        </p>
-      </div>
-
-      <div
-        ref={(el) => {
-          itemsRef.current[2] = el;
-        }}
-        className={blockClass}
-      >
-        <div className="flex items-center justify-between">
-          <p className="text-[10px] font-bold tracking-[0.12em] text-zinc-400">
-            NEXT STEP
-          </p>
-          <span className="text-xs text-lime-300">02</span>
-        </div>
-        <p className="mt-3 text-lg font-bold text-lime-300">
-          Improve pacing
-        </p>
-        <p className="mt-1 text-xs leading-5 text-zinc-400">
-          Remove slow moments, tighten transitions and keep each shot purposeful.
-        </p>
-        <p className="mt-2 text-[10px] font-semibold text-zinc-300">
-          ACTIONABLE TIP
-        </p>
-      </div>
+        return (
+          <div
+            key={card.label}
+            className={`absolute top-2 box-border h-[148px] overflow-hidden rounded-2xl border p-3 shadow-2xl backdrop-blur-md transition-all duration-1000 ease-[cubic-bezier(0.22,1,0.36,1)] sm:p-4 ${
+              isActive
+                ? "border-lime-400/40 bg-[#1b2028] opacity-100 shadow-lime-400/10"
+                : "border-white/10 bg-[#171923]/95 opacity-65"
+            }`}
+            style={{
+              left,
+              width: "clamp(145px, 32%, 220px)",
+              transform: `translateX(-50%) scale(${isActive ? 1.11 : 0.88})`,
+              zIndex: isActive ? 3 : 1,
+            }}
+          >
+            <div className="flex items-center justify-between gap-1">
+              <p
+                className={`text-[9px] font-bold tracking-[0.08em] sm:text-[10px] ${
+                  isActive ? "text-lime-300" : "text-zinc-400"
+                }`}
+              >
+                {card.label}
+              </p>
+              <span className="shrink-0 rounded-full bg-lime-400/10 px-1.5 py-1 text-[8px] text-lime-300 sm:px-2 sm:text-[9px]">
+                {card.badge}
+              </span>
+            </div>
+            <p
+              className={`mt-2 text-xs font-bold sm:text-sm ${
+                index === 2 ? "text-lime-300" : "text-white"
+              }`}
+            >
+              {card.title}
+            </p>
+            <p className="mt-1 line-clamp-2 text-[10px] leading-4 text-zinc-400 sm:text-[11px]">
+              {card.description}
+            </p>
+            <p className="mt-1 text-[8px] font-semibold tracking-wide text-lime-300 sm:text-[9px]">
+              {card.footer}
+            </p>
+          </div>
+        );
+      })}
     </div>
   );
 }
 
 
-
-
-
 export default function HomePage() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    const supabase = createClient();
+    let active = true;
+
+    supabase.auth.getUser().then(({ data }) => {
+      if (!active) return;
+      setIsLoggedIn(Boolean(data.user));
+      setAuthChecked(true);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (!active) return;
+      setIsLoggedIn(Boolean(session?.user));
+      setAuthChecked(true);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#090a12] text-white">
       <div className="pointer-events-none absolute -right-40 -top-48 h-[650px] w-[800px] rounded-full bg-lime-400/[0.07] blur-[150px]" />
@@ -228,12 +181,33 @@ export default function HomePage() {
             </a>
           </nav>
 
-          <Link
-            href="/dashboard/reels"
-            className="rounded-full border border-white/10 px-5 py-2.5 text-xs font-medium transition hover:border-lime-400/50 hover:text-lime-300"
-          >
-            Dashboard
-          </Link>
+          <div className="flex items-center gap-3">
+            {authChecked && (
+              isLoggedIn ? (
+                <Link
+                  href="/dashboard"
+                  className="rounded-full bg-lime-400 px-5 py-2.5 text-xs font-bold text-black transition hover:bg-lime-300"
+                >
+                  Dashboard
+                </Link>
+              ) : (
+                <>
+                  <Link
+                    href="/login"
+                    className="rounded-full border border-white/10 px-5 py-2.5 text-xs font-semibold transition hover:border-lime-400/50 hover:text-lime-300"
+                  >
+                    Log in
+                  </Link>
+                  <Link
+                    href="/signup"
+                    className="rounded-full bg-lime-400 px-5 py-2.5 text-xs font-bold text-black transition hover:bg-lime-300"
+                  >
+                    Sign up
+                  </Link>
+                </>
+              )
+            )}
+          </div>
         </header>
 
         <section className="grid min-h-[570px] items-center gap-12 py-16 md:grid-cols-[1.1fr_0.9fr] lg:min-h-[650px] lg:gap-20 lg:py-24">
@@ -258,21 +232,9 @@ export default function HomePage() {
               actionable insights to help you create stronger videos.
             </p>
 
-            <div className="mt-8 flex flex-wrap items-center gap-3">
-              <Link
-                href="/dashboard/reels"
-                className="rounded-full bg-lime-400 px-7 py-3.5 text-sm font-bold text-black transition hover:bg-lime-300"
-              >
-                Analyze your Reel <span aria-hidden="true">→</span>
-              </Link>
-
-              <a
-                href="#how-it-works"
-                className="rounded-full border border-white/10 px-6 py-3.5 text-sm text-zinc-300 transition hover:border-white/25 hover:text-white"
-              >
-                How it works
-              </a>
-            </div>
+            <p className="mt-8 text-sm text-zinc-500">
+              Create your account to unlock your personalized Reel insights.
+            </p>
 
             <div className="mt-7 flex flex-wrap gap-2">
               {["Instagram Reels", "Visual AI", "Actionable insights"].map(
@@ -380,12 +342,14 @@ export default function HomePage() {
             </p>
           </div>
 
-          <Link
-            href="/dashboard/reels"
-            className="inline-flex shrink-0 items-center justify-center rounded-full bg-lime-400 px-7 py-3.5 text-sm font-bold text-black transition hover:bg-lime-300"
-          >
-            Start analyzing <span className="ml-2">→</span>
-          </Link>
+          {authChecked && (
+            <Link
+              href={isLoggedIn ? "/dashboard" : "/signup"}
+              className="inline-flex min-h-11 items-center justify-center rounded-full bg-lime-400 px-7 py-3 text-sm font-bold text-[#090a12] transition hover:bg-lime-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-lime-400 focus-visible:ring-offset-2 focus-visible:ring-offset-[#11141f]"
+            >
+              {isLoggedIn ? "Dashboard" : "Sign Up"}
+            </Link>
+          )}
         </section>
 
         <footer className="flex flex-col gap-3 border-t border-white/[0.06] py-7 text-xs text-zinc-500 sm:flex-row sm:items-center sm:justify-between">

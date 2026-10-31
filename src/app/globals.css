@@ -63,16 +63,8 @@
   --fb: oklch(0.62 0.18 260);
 
   --gradient-hero:
-    radial-gradient(
-      60% 60% at 80% 10%,
-      oklch(0.9 0.2 125 / 18%),
-      transparent 70%
-    ),
-    radial-gradient(
-      50% 50% at 10% 80%,
-      oklch(0.72 0.19 25 / 16%),
-      transparent 70%
-    );
+    radial-gradient(60% 60% at 80% 10%, #c0f4472e, transparent 70%),
+  radial-gradient(50% 50% at 10% 80%, #ff706a29, transparent 70%);
 
   --shadow-glow: 0 20px 60px -20px oklch(0.9 0.2 125 / 45%);
 }
@@ -197,4 +189,248 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+
+/* REEL DNA shared design baseline */
+:root {
+  --rdna-background: #090a12;
+  --rdna-surface: #11141f;
+  --rdna-accent: #a3e635;
+  --rdna-border: rgb(255 255 255 / 10%);
+  --rdna-text: #ffffff;
+  --rdna-muted: #a1a1aa;
+}
+
+html {
+  color-scheme: dark;
+  background: var(--rdna-background);
+}
+
+body {
+  background-color: var(--rdna-background);
+  color: var(--rdna-text);
+}
+
+::selection {
+  background: rgb(163 230 53 / 25%);
+  color: var(--rdna-text);
+}
+
+:where(input, textarea, select, button, a):focus-visible {
+  outline: 2px solid var(--rdna-accent);
+  outline-offset: 3px;
+}
+
+
+/* REEL DNA shared component system */
+@layer components {
+  .rdna-page {
+    min-height: 100vh;
+    background: #090a12;
+    color: #fff;
+  }
+
+  .rdna-container {
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    padding: 2rem 1.25rem 4rem;
+  }
+
+  .rdna-card {
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 1.5rem;
+    background: #11141f;
+    padding: 1.5rem;
+  }
+
+  .rdna-input {
+    width: 100%;
+    border: 1px solid rgb(255 255 255 / 10%);
+    border-radius: 0.75rem;
+    background: #090a12;
+    padding: 0.8rem 1rem;
+    color: #fff;
+    outline: none;
+    transition: border-color 180ms ease;
+  }
+
+  .rdna-input::placeholder {
+    color: #71717a;
+  }
+
+  .rdna-input:focus {
+    border-color: #a3e635;
+  }
+
+  .rdna-button-primary {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    border: 0;
+    border-radius: 999px;
+    background: #a3e635;
+    padding: 0.75rem 1.25rem;
+    color: #090a12;
+    font-weight: 700;
+    transition: background 180ms ease, transform 180ms ease;
+  }
+
+  .rdna-button-primary:hover {
+    background: #bef264;
+  }
+
+  .rdna-button-primary:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .rdna-button-secondary {
+    display: inline-flex;
+    min-height: 2.75rem;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid rgb(255 255 255 / 15%);
+    border-radius: 999px;
+    padding: 0.65rem 1rem;
+    color: #e4e4e7;
+    transition: border-color 180ms ease, background 180ms ease;
+  }
+
+  .rdna-button-secondary:hover {
+    border-color: rgb(163 230 53 / 50%);
+    background: rgb(255 255 255 / 4%);
+  }
+
+  .rdna-muted {
+    color: #a1a1aa;
+  }
+}
+
+@media (min-width: 640px) {
+  .rdna-container {
+    padding-inline: 2rem;
+  }
+
+  .rdna-card {
+    padding: 2rem;
+  }
+}
+
+
+/* REEL DNA GLOBAL VISUAL CONSISTENCY */
+:root {
+  --rdna-background: #090a12;
+  --rdna-surface: #11141f;
+  --rdna-accent: #a3e635;
+  --rdna-border: rgb(255 255 255 / 10%);
+  --rdna-text: #ffffff;
+  --rdna-muted: #a1a1aa;
+
+  --background: #090a12;
+  --foreground: #ffffff;
+  --card: #11141f;
+  --card-foreground: #ffffff;
+  --popover: #11141f;
+  --popover-foreground: #ffffff;
+  --surface: #11141f;
+  --primary: #a3e635;
+  --primary-foreground: #090a12;
+  --secondary: #171a27;
+  --secondary-foreground: #ffffff;
+  --muted: #171a27;
+  --muted-foreground: #a1a1aa;
+  --accent: #ff706a;
+  --accent-foreground: #ffffff;
+  --border: rgb(255 255 255 / 10%);
+  --input: rgb(255 255 255 / 10%);
+  --ring: #a3e635;
+
+  --gradient-hero:
+    radial-gradient(
+      60% 60% at 80% 10%,
+      rgb(163 230 53 / 18%),
+      transparent 70%
+    ),
+    radial-gradient(
+      50% 50% at 10% 80%,
+      rgb(255 112 106 / 16%),
+      transparent 70%
+    );
+}
+
+html {
+  min-height: 100%;
+  color-scheme: dark;
+  background: #090a12;
+}
+
+body {
+  min-height: 100vh;
+  background-color: #090a12;
+  background-image: var(--gradient-hero);
+  background-attachment: fixed;
+  color: #ffffff;
+  font-family: var(--font-sans), sans-serif;
+}
+
+/* Apply the same atmospheric background to each page root. */
+body > * {
+  min-height: 100%;
+}
+
+main {
+  background-color: #090a12 !important;
+  background-image: var(--gradient-hero) !important;
+  background-attachment: fixed;
+  color: #ffffff;
+  font-family: var(--font-sans), sans-serif;
+}
+
+/* Consistent display typography throughout the application. */
+main h1,
+main h2,
+main h3 {
+  font-family: var(--font-display), sans-serif;
+}
+
+/* Shared card surface and border treatment. */
+.rdna-card {
+  border-color: var(--rdna-border);
+  background-color: var(--rdna-surface);
+  border-radius: 1.5rem;
+}
+
+/* Keep inputs visually aligned with the Login page. */
+.rdna-input {
+  border-color: var(--rdna-border);
+  background-color: #090a12;
+  color: #ffffff;
+}
+
+.rdna-input:focus {
+  border-color: var(--rdna-accent);
+}
+
+/* Shared lime primary action. */
+.rdna-button-primary {
+  background-color: var(--rdna-accent);
+  color: #090a12;
+}
+
+.rdna-button-primary:hover {
+  background-color: #bef264;
+}
+
+/* Standard secondary text. */
+.rdna-muted {
+  color: var(--rdna-muted);
+}
+
+::selection {
+  background: rgb(163 230 53 / 25%);
+  color: #ffffff;
 }
